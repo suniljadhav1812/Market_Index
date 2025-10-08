@@ -6,8 +6,8 @@ import numpy as np
 from datetime import timedelta
 import logging
 
-# Set up logging for debugging
-logging.basicConfig(level=logging.DEBUG)
+# Set up logging
+logging.basicConfig(level=logging.DEBUG, filename="app.log", filemode="a")
 logger = logging.getLogger(__name__)
 
 # -------------------------------
@@ -20,18 +20,21 @@ def fetch_data(symbol, days):
         data = yf.download(symbol, period=f"{days}d", interval="1d")
         if data.empty:
             logger.error(f"No data returned for {symbol}")
-            return pd.Series()
+            return pd.Series(dtype=float)
+        # Ensure we get a 1D Series of closing prices
         close_data = data['Close'].dropna()
-        logger.debug(f"Fetched {len(close_data)} data points for {symbol}, shape: {close_data.shape}")
+        logger.debug(f"Fetched {len(close_data)} data points for {symbol}, type: {type(close_data)}, shape: {close_data.shape}")
         return close_data
     except Exception as e:
         logger.error(f"Error fetching data for {symbol}: {str(e)}")
-        return pd.Series()
+        return pd.Series(dtype=float)
 
 def fit_trend_line(dates, values, forecast_days):
     """Fit a linear trend line and extend for forecasting."""
     try:
         x = np.arange(len(dates))
+        # Ensure values is 1D
+        values = np.asarray(values).flatten()
         coeffs = np.polyfit(x, values, 1)  # Linear fit
         trend_line = np.polyval(coeffs, x)
         x_future = np.arange(len(dates) + forecast_days)
@@ -54,9 +57,7 @@ index_choice = st.sidebar.radio(
 )
 days = st.sidebar.selectbox("Select period (days)", [30, 90, 180, 365], index=3)
 forecast_days = st.sidebar.number_input("Forecast days into future", min_value=1, max_value=30, value=5, step=1)
-
-# Debug mode toggle
-debug_mode = st.sidebar.checkbox("Enable Debug Mode", value=False)
+debug_mode = st.sidebar.checkbox("Enable Debug Mode", value=True)  # Enabled by default for now
 
 # -------------------------------
 # Fetch & prepare data
@@ -67,17 +68,18 @@ data = fetch_data(symbol, days)
 if data.empty:
     st.error(f"⚠️ No data available for {index_choice}. Please try a different index or period.")
     if debug_mode:
-        st.write("Debug: Data fetching failed. Check logs for details.")
+        st.write("Debug: Data fetching failed. Check logs (app.log) for details.")
     st.stop()
 
 # Log data details for debugging
 if debug_mode:
     st.write(f"Debug: Data type: {type(data)}, Shape: {data.shape}, Index type: {type(data.index)}")
+    st.write(f"Debug: First few data points:\n{data.head().to_string()}")
 
 # Ensure data is a Pandas Series with a datetime index
 try:
-    # No need to recreate Series; data is already a Series from fetch_data
-    data.index = pd.to_datetime(data.index)  # Ensure index is datetime
+    # Ensure index is datetime and data is a Series
+    data = pd.Series(data, index=pd.to_datetime(data.index))
     data = data.iloc[::-1]  # Reverse (latest to oldest)
     dates = data.index
 except Exception as e:
@@ -105,7 +107,7 @@ try:
                 ha='center', color='red', fontweight='bold')
 
     # Fit and plot trend line with forecast
-    x, trend_line, x_future, trend_future = fit_trend_line(dates, data.values, forecast_days)
+    x, trend_line, x_future, trend_future = fit_trend_line(dates, data, forecast_days)
     if trend_line is None:
         st.warning("⚠️ Could not generate trend line. Displaying data without forecast.")
     else:
@@ -137,7 +139,7 @@ except Exception as e:
 st.subheader("📊 Data Preview")
 
 try:
-    # Create DataFrame with explicit index
+    # Create DataFrame directly from Series
     df = pd.DataFrame({index_choice: data}, index=data.index)
 
     # Highlight latest row
@@ -180,7 +182,7 @@ except Exception as e:
 if debug_mode:
     st.subheader("Debug Logs")
     try:
-        with open("logfile.log", "r") as log_file:
+        with open("app.log", "r") as log_file:
             st.text(log_file.read())
     except FileNotFoundError:
         st.write("Debug: Log file not found.")
