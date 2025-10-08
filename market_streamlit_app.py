@@ -1,8 +1,9 @@
-
 import streamlit as st
 import yfinance as yf
 import matplotlib.pyplot as plt
 import pandas as pd
+import numpy as np
+from datetime import timedelta
 
 # -------------------------------
 # Helper functions
@@ -11,108 +12,116 @@ def fetch_data(symbol, days):
     data = yf.download(symbol, period=f"{days}d", interval="1d")
     return data['Close'].dropna()
 
-def normalize(series):
-    if series.empty:
-        return series
-    min_v = series.min().item()
-    max_v = series.max().item()
-    if max_v == min_v:
-        return series * 0 + 0.5
-    return (series - min_v) / (max_v - min_v)
+def fit_trend_line(dates, values, forecast_days):
+    # Convert dates to numeric values (days since start)
+    x = np.arange(len(dates))
+    # Fit a linear trend line
+    coeffs = np.polyfit(x, values, 1)  # Linear fit (degree 1)
+    trend_line = np.polyval(coeffs, x)
+    # Extend for forecast
+    x_future = np.arange(len(dates) + forecast_days)
+    trend_future = np.polyval(coeffs, x_future)
+    return x, trend_line, x_future, trend_future
 
 # -------------------------------
 # Streamlit UI
 # -------------------------------
-st.title("📈 NIFTY & BANKNIFTY Tracker")
+st.title("📈 NIFTY / BANKNIFTY Tracker")
 
 # Sidebar controls
-days = st.sidebar.selectbox("Select period (days)", [30, 90, 180, 365], index=1)
-normalize_opt = st.sidebar.checkbox("Normalize values (0–1 scale)", value=True)
-reverse_opt = st.sidebar.checkbox("Reverse time (latest → oldest)", value=True)
-index_choice = st.sidebar.multiselect(
-    "Select Indices",
+index_choice = st.sidebar.radio(
+    "Select Index",
     ["NIFTY", "BANKNIFTY"],
-    default=["NIFTY", "BANKNIFTY"]
+    index=0
 )
+days = st.sidebar.selectbox("Select period (days)", [30, 90, 180, 365], index=3)
+forecast_days = st.sidebar.number_input("Forecast days into future", min_value=1, max_value=30, value=5, step=1)
 
 # -------------------------------
 # Fetch & prepare data
 # -------------------------------
-data_dict = {}
-if "NIFTY" in index_choice:
-    data_dict["NIFTY"] = fetch_data("^NSEI", days)
-if "BANKNIFTY" in index_choice:
-    data_dict["BANKNIFTY"] = fetch_data("^NSEBANK", days)
+symbol = "^NSEI" if index_choice == "NIFTY" else "^NSEBANK"
+data = fetch_data(symbol, days)
 
-# If nothing selected
-if not data_dict:
-    st.warning("⚠️ Please select at least one index from the sidebar.")
+if data.empty:
+    st.warning(f"⚠️ No data available for {index_choice}.")
     st.stop()
 
-# Align on common dates if both selected
-if len(data_dict) > 1:
-    common_dates = set.intersection(*(set(v.index) for v in data_dict.values()))
-    for k in data_dict:
-        data_dict[k] = data_dict[k].loc[sorted(common_dates)]
+# Reverse data (latest to oldest)
+data = data.iloc[::-1]
 
-# Apply normalization
-if normalize_opt:
-    for k in data_dict:
-        data_dict[k] = normalize(data_dict[k])
-
-# Reverse if selected
-if reverse_opt:
-    for k in data_dict:
-        data_dict[k] = data_dict[k].iloc[::-1]
+# Convert index to datetime if not already
+dates = pd.to_datetime(data.index)
 
 # -------------------------------
 # Plot
 # -------------------------------
 fig, ax = plt.subplots(figsize=(12, 6))
 
-for label, series in data_dict.items():
-    ax.plot(series.index, series, label=label, marker="o")
-    
-    # Highlight latest value
-    latest_date = series.index[0]  # newest (first if reversed)
-    latest_val = float(series.iloc[0])  # force float
-    ax.scatter(latest_date, latest_val, color='red', s=100, zorder=5)
-    ax.annotate(f"{latest_val:.2f}", (latest_date, latest_val),
-                textcoords="offset points", xytext=(0,10),
-                ha='center', color='red', fontweight='bold')
+# Plot actual data
+ax.plot(dates, data, label=index_choice, marker="o", color="blue")
 
-ax.set_title(f"NIFTY / BANKNIFTY - Last {days} Days")
+# Highlight current (latest) value
+latest_date = dates[0]
+latest_val = float(data.iloc[0])
+ax.scatter(latest_date, latest_val, color='red', s=100, zorder=5)
+ax.annotate(f"{latest_val:.2f}", (latest_date, latest_val),
+            textcoords="offset points", xytext=(0, 10),
+            ha='center', color='red', fontweight='bold')
+
+# Fit and plot trend line with forecast
+x, trend_line, x_future, trend_future = fit_trend_line(dates, data, forecast_days)
+
+# Extend dates for forecast
+future_dates = [dates[0] + timedelta(days=i) for i in range(len(dates), len(dates) + forecast_days)]
+all_dates = list(dates) + future_dates
+
+# Plot trend line (past data)
+ax.plot(dates, trend_line, label="Trend Line", color="green", linestyle="--")
+
+# Plot forecasted trend
+ax.plot(all_dates, trend_future, label=f"{forecast_days}-Day Forecast", color="orange", linestyle="--")
+
+ax.set_title(f"{index_choice} - Last {days} Days with {forecast_days}-Day Forecast")
 ax.set_xlabel("Date")
-ax.set_ylabel("Normalized Value (0–1)" if normalize_opt else "Closing Price")
+ax.set_ylabel("Closing Price")
 ax.legend()
 plt.xticks(rotation=45)
+plt.tight_layout()
 st.pyplot(fig)
+
 # -------------------------------
 # Data Preview
 # -------------------------------
-
 st.subheader("📊 Data Preview")
 
-if data_dict:
-    df = pd.concat(data_dict.values(), axis=1)
-    df.columns = list(data_dict.keys())
+# Prepare DataFrame
+df = pd.DataFrame({index_choice: data})
 
-    # Highlight latest row
-    def highlight_latest(row):
-        if row.name == df.index[0]:  # first row is latest
-            return ['background-color: yellow']*len(row)
-        else:
-            return ['']*len(row)
+# Highlight latest row
+def highlight_latest(row):
+    if row.name == df.index[0]:
+        return ['background-color: yellow'] * len(row)
+    return [''] * len(row)
 
-    st.dataframe(df.style.apply(highlight_latest, axis=1))
+st.dataframe(df.style.apply(highlight_latest, axis=1))
 
-    # Download button
-    csv = df.to_csv().encode("utf-8")
-    st.download_button(
-        label="📥 Download CSV",
-        data=csv,
-        file_name=f"nifty_banknifty_{days}d.csv",
-        mime="text/csv",
-    )
-else:
-    st.warning("⚠️ No data available to display.")
+# Add forecasted values to DataFrame
+forecast_df = pd.DataFrame({
+    index_choice: trend_future[-forecast_days:],
+    "Type": ["Forecast"] * forecast_days
+}, index=future_dates)
+df["Type"] = "Actual"
+combined_df = pd.concat([df, forecast_df])
+
+st.subheader(f"📅 Forecasted Values (Next {forecast_days} Days)")
+st.dataframe(forecast_df[[index_choice]])
+
+# Download button
+csv = combined_df.to_csv().encode("utf-8")
+st.download_button(
+    label="📥 Download CSV",
+    data=csv,
+    file_name=f"{index_choice.lower()}_{days}d_with_forecast.csv",
+    mime="text/csv",
+)
