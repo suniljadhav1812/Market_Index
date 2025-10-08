@@ -58,10 +58,10 @@ def fit_trend_line(dates, values, forecast_days):
 st.title("📈 NIFTY / BANKNIFTY Tracker")
 
 # Sidebar controls
-index_choice = st.sidebar.radio("Select Index", ["NIFTY", "BANKNIFTY"], index=0)
-days = st.sidebar.selectbox("Select period (days)", [30, 90, 180, 365], index=3)
+index_choice = st.sidebar.radio("Select Index", ["NIFTY", "BANKNIFTY"], index=1)
+days = st.sidebar.selectbox("Select period (days)", [30, 90, 180, 365], index=1)
 forecast_days = st.sidebar.number_input("Forecast days into future", min_value=1, max_value=30, value=5, step=1)
-debug_mode = st.sidebar.checkbox("Enable Debug Mode", value=True)
+debug_mode = st.sidebar.checkbox("Enable Debug Mode", value=False)
 use_dummy_data = st.sidebar.checkbox("Use Dummy Data (for testing)", value=False)
 
 # -------------------------------
