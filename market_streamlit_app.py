@@ -22,7 +22,7 @@ def fetch_data(symbol, days):
             logger.error(f"No data returned for {symbol}")
             return pd.Series()
         close_data = data['Close'].dropna()
-        logger.debug(f"Fetched {len(close_data)} data points for {symbol}")
+        logger.debug(f"Fetched {len(close_data)} data points for {symbol}, shape: {close_data.shape}")
         return close_data
     except Exception as e:
         logger.error(f"Error fetching data for {symbol}: {str(e)}")
@@ -70,13 +70,18 @@ if data.empty:
         st.write("Debug: Data fetching failed. Check logs for details.")
     st.stop()
 
+# Log data details for debugging
+if debug_mode:
+    st.write(f"Debug: Data type: {type(data)}, Shape: {data.shape}, Index type: {type(data.index)}")
+
 # Ensure data is a Pandas Series with a datetime index
 try:
-    data = pd.Series(data.values, index=pd.to_datetime(data.index))
+    # No need to recreate Series; data is already a Series from fetch_data
+    data.index = pd.to_datetime(data.index)  # Ensure index is datetime
     data = data.iloc[::-1]  # Reverse (latest to oldest)
     dates = data.index
 except Exception as e:
-    logger.error(f"Error processing data: {str(e)}")
+    logger.error(f"Error processing data for {index_choice}: {str(e)}")
     st.error(f"⚠️ Error processing data for {index_choice}: {str(e)}")
     if debug_mode:
         st.write(f"Debug: Data processing failed. Error: {str(e)}")
@@ -100,7 +105,7 @@ try:
                 ha='center', color='red', fontweight='bold')
 
     # Fit and plot trend line with forecast
-    x, trend_line, x_future, trend_future = fit_trend_line(dates, data, forecast_days)
+    x, trend_line, x_future, trend_future = fit_trend_line(dates, data.values, forecast_days)
     if trend_line is None:
         st.warning("⚠️ Could not generate trend line. Displaying data without forecast.")
     else:
@@ -133,7 +138,7 @@ st.subheader("📊 Data Preview")
 
 try:
     # Create DataFrame with explicit index
-    df = pd.DataFrame({index_choice: data.values}, index=data.index)
+    df = pd.DataFrame({index_choice: data}, index=data.index)
 
     # Highlight latest row
     def highlight_latest(row):
@@ -174,5 +179,8 @@ except Exception as e:
 # Display logs if debug mode is enabled
 if debug_mode:
     st.subheader("Debug Logs")
-    with open("logfile.log", "r") as log_file:
-        st.text(log_file.read())
+    try:
+        with open("logfile.log", "r") as log_file:
+            st.text(log_file.read())
+    except FileNotFoundError:
+        st.write("Debug: Log file not found.")
