@@ -3,7 +3,7 @@ import yfinance as yf
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
-from datetime import timedelta
+from datetime import timedelta, datetime
 import logging
 
 # Set up logging
@@ -21,21 +21,29 @@ def fetch_data(symbol, days):
         if data.empty:
             logger.error(f"No data returned for {symbol}")
             return pd.Series(dtype=float)
-        # Ensure we get a 1D Series of closing prices
+        # Explicitly extract Close as a Series and ensure 1D
         close_data = data['Close'].dropna()
+        if isinstance(close_data, pd.DataFrame):
+            close_data = close_data.iloc[:, 0]  # Take first column if DataFrame
         logger.debug(f"Fetched {len(close_data)} data points for {symbol}, type: {type(close_data)}, shape: {close_data.shape}")
         return close_data
     except Exception as e:
         logger.error(f"Error fetching data for {symbol}: {str(e)}")
         return pd.Series(dtype=float)
 
+def generate_dummy_data(days):
+    """Generate dummy data for testing if yfinance fails."""
+    logger.debug("Generating dummy data")
+    dates = pd.date_range(end=datetime.now(), periods=days, freq="D")
+    values = np.random.normal(10000, 1000, days)  # Random prices
+    return pd.Series(values, index=dates)
+
 def fit_trend_line(dates, values, forecast_days):
     """Fit a linear trend line and extend for forecasting."""
     try:
         x = np.arange(len(dates))
-        # Ensure values is 1D
-        values = np.asarray(values).flatten()
-        coeffs = np.polyfit(x, values, 1)  # Linear fit
+        values = np.asarray(values).flatten()  # Ensure 1D
+        coeffs = np.polyfit(x, values, 1)
         trend_line = np.polyval(coeffs, x)
         x_future = np.arange(len(dates) + forecast_days)
         trend_future = np.polyval(coeffs, x_future)
@@ -50,36 +58,36 @@ def fit_trend_line(dates, values, forecast_days):
 st.title("📈 NIFTY / BANKNIFTY Tracker")
 
 # Sidebar controls
-index_choice = st.sidebar.radio(
-    "Select Index",
-    ["NIFTY", "BANKNIFTY"],
-    index=0
-)
+index_choice = st.sidebar.radio("Select Index", ["NIFTY", "BANKNIFTY"], index=0)
 days = st.sidebar.selectbox("Select period (days)", [30, 90, 180, 365], index=3)
 forecast_days = st.sidebar.number_input("Forecast days into future", min_value=1, max_value=30, value=5, step=1)
-debug_mode = st.sidebar.checkbox("Enable Debug Mode", value=True)  # Enabled by default for now
+debug_mode = st.sidebar.checkbox("Enable Debug Mode", value=True)
+use_dummy_data = st.sidebar.checkbox("Use Dummy Data (for testing)", value=False)
 
 # -------------------------------
 # Fetch & prepare data
 # -------------------------------
 symbol = "^NSEI" if index_choice == "NIFTY" else "^NSEBANK"
-data = fetch_data(symbol, days)
+if use_dummy_data:
+    st.warning("Using dummy data for testing.")
+    data = generate_dummy_data(days)
+else:
+    data = fetch_data(symbol, days)
 
 if data.empty:
-    st.error(f"⚠️ No data available for {index_choice}. Please try a different index or period.")
+    st.error(f"⚠️ No data available for {index_choice}. Try using dummy data or a different period.")
     if debug_mode:
-        st.write("Debug: Data fetching failed. Check logs (app.log) for details.")
+        st.write("Debug: Data fetching failed. Check app.log for details.")
     st.stop()
 
-# Log data details for debugging
+# Log data details
 if debug_mode:
     st.write(f"Debug: Data type: {type(data)}, Shape: {data.shape}, Index type: {type(data.index)}")
-    st.write(f"Debug: First few data points:\n{data.head().to_string()}")
+    st.write(f"Debug: First 5 data points:\n{data.head().to_string()}")
 
-# Ensure data is a Pandas Series with a datetime index
+# Ensure data is a Series with datetime index
 try:
-    # Ensure index is datetime and data is a Series
-    data = pd.Series(data, index=pd.to_datetime(data.index))
+    data = pd.Series(data.values.flatten(), index=pd.to_datetime(data.index))
     data = data.iloc[::-1]  # Reverse (latest to oldest)
     dates = data.index
 except Exception as e:
@@ -94,11 +102,9 @@ except Exception as e:
 # -------------------------------
 try:
     fig, ax = plt.subplots(figsize=(12, 6))
-
-    # Plot actual data
     ax.plot(dates, data, label=index_choice, marker="o", color="blue")
 
-    # Highlight current (latest) value
+    # Highlight latest value
     latest_date = dates[0]
     latest_val = float(data.iloc[0])
     ax.scatter(latest_date, latest_val, color='red', s=100, zorder=5)
@@ -106,16 +112,13 @@ try:
                 textcoords="offset points", xytext=(0, 10),
                 ha='center', color='red', fontweight='bold')
 
-    # Fit and plot trend line with forecast
+    # Fit and plot trend line
     x, trend_line, x_future, trend_future = fit_trend_line(dates, data, forecast_days)
     if trend_line is None:
-        st.warning("⚠️ Could not generate trend line. Displaying data without forecast.")
+        st.warning("⚠️ Could not generate trend line. Displaying data only.")
     else:
-        # Extend dates for forecast
         future_dates = [dates[0] + timedelta(days=i) for i in range(1, forecast_days + 1)]
         all_dates = list(dates) + future_dates
-
-        # Plot trend line (past) and forecast
         ax.plot(dates, trend_line, label="Trend Line", color="green", linestyle="--")
         ax.plot(all_dates, trend_future, label=f"{forecast_days}-Day Forecast", color="orange", linestyle="--")
 
@@ -139,30 +142,24 @@ except Exception as e:
 st.subheader("📊 Data Preview")
 
 try:
-    # Create DataFrame directly from Series
     df = pd.DataFrame({index_choice: data}, index=data.index)
 
-    # Highlight latest row
     def highlight_latest(row):
         return ['background-color: yellow' if row.name == df.index[0] else '' for _ in row]
 
     st.dataframe(df.style.apply(highlight_latest, axis=1))
 
-    # Forecasted values DataFrame
     if trend_future is not None:
         forecast_df = pd.DataFrame({
             index_choice: trend_future[-forecast_days:],
             "Type": ["Forecast"] * forecast_days
         }, index=future_dates)
-
-        # Combined DataFrame for download
         df["Type"] = "Actual"
         combined_df = pd.concat([df, forecast_df])
 
         st.subheader(f"📅 Forecasted Values (Next {forecast_days} Days)")
         st.dataframe(forecast_df[[index_choice]])
 
-        # Download button
         csv = combined_df.to_csv().encode("utf-8")
         st.download_button(
             label="📥 Download CSV",
@@ -171,14 +168,14 @@ try:
             mime="text/csv",
         )
     else:
-        st.warning("⚠️ Forecast data not available for download.")
+        st.warning("⚠️ Forecast data not available.")
 except Exception as e:
     logger.error(f"Error generating data preview: {str(e)}")
     st.error(f"⚠️ Error generating data preview: {str(e)}")
     if debug_mode:
         st.write(f"Debug: Data preview failed. Error: {str(e)}")
 
-# Display logs if debug mode is enabled
+# Show logs in debug mode
 if debug_mode:
     st.subheader("Debug Logs")
     try:
